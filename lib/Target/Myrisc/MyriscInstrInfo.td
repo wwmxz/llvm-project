@@ -42,12 +42,25 @@ def imm20 : Operand<i32>, ImmLeaf<i32, [{ return isInt<20>(Imm);}]>;
 def addrFI : ComplexPattern<iPTR, 2, "SelectAddrFI", [frameindex], [SDNPWantParent]>;
 
 
+//def LOAD : I<(outs GPR:$ra), (ins mem: $addr), "lw \t$ra, $addr", [],IILoad>;
+//def : Pat<(load addrFI: $addr), (LOAD addrFI:$addr)>;
+//
+//def STORE : S<(outs), (ins GPR:$ra, mem: $addr), "sw \t$ra, $addr", [],IIStore>;
+//def : Pat<(store GPR:$ra, addrFI: $addr), (STORE GPR:$ra, addrFI: $addr)>;
+
 // load 和 store
 //- `multiclass`：TableGen 批量定义模板（类似 C++ 模板类，避免重复写 FI/R 版本）；
 //- `PatFrag op`：IR 操作片段（如 `store` 是普通存储，`truncstorei16` 是截断为 16 位存储）；
 //- `!strconcat(asm, "\t$rd, $imm12($rs1)")`：拼接汇编字符串（如 `ld $a0, 4($sp)`）；
 multiclass LOAD<bits<7> opcode, bits<3> funct3, PatFrag op, string asm> {
-    def FI : I<opcode, funct3, (outs GPR: $rd), (ins GPR:$rs1, imm12:$imm), !strconcat(asm, "\t$rd, $imm($rs1)"), [(set GPR:$rd, (op (addrFI GPR:$rs1, imm12:$imm)))],IILoad>;
+//    def FI : I<opcode, funct3, (outs GPR: $rd), (ins GPR:$rs1, imm12:$imm), !strconcat(asm, "\t$rd, $imm($rs1)"), [(set GPR:$rd, (op (addrFI GPR:$rs1, imm12:$imm)))],IILoad>;
+    def FI : I<opcode, funct3,
+                   (outs GPR:$rd),                // 输出：目的寄存器
+                   (ins mem:$addr),               // 输入：mem类型操作数（GPR+imm12）
+                   !strconcat(asm, "\t$rd, $addr"), // 汇编格式：lw a0,4(sp)
+                   // pattern规则：用addrFI解析帧索引为mem操作数，再执行加载
+                   [(set GPR:$rd, (op addrFI:$addr))],
+                   IILoad>;
     def R : I<opcode, funct3, (outs GPR: $rd), (ins GPR: $rs1), !strconcat(asm, "\t$rd, 0($rs1)"), [(set GPR:$rd, (op GPR:$rs1))],IILoad> {
         let imm = 0;
     }
@@ -63,11 +76,19 @@ defm LOADSB:LOAD<0b0000011, 0b000, sextloadi8, "lb">;
 defm LOADZB:LOAD<0b0000011, 0b000, zextloadi8, "lbu">;
 
 multiclass STORE<bits<7> opcode, bits<3> funct3, PatFrag op, string asm> {
+//    def FI : S<opcode, funct3,
+//    (outs), (ins GPR: $rs2, GPR:$rs1, imm12:$imm),
+//    !strconcat(asm, "\t$rs2, $imm($rs1)"),
+//    [(op GPR:$rs2, (addrFI GPR:$rs1, imm12:$imm))],
+//    IIStore>;
     def FI : S<opcode, funct3,
-    (outs), (ins GPR: $rs2, GPR:$rs1, imm12:$imm),
-    !strconcat(asm, "\t$rs2, $imm($rs1)"),
-    [(op GPR:$rs2, (addrFI GPR:$rs1, imm12:$imm))],
-    IIStore>;
+                   (outs),                        // 存储指令无输出
+                   (ins GPR:$rs2, mem:$addr),     // 输入：要存储的值（rs2） + mem地址（GPR+imm12）
+                   !strconcat(asm, "\t$rs2, $addr"), // 汇编格式：sw a0,4(sp)
+                   // pattern规则：用addrFI解析帧索引为mem操作数，再执行存储
+                   [(op GPR:$rs2, addrFI:$addr)],
+                   IIStore>;
+
     def R : S<opcode, funct3,
     (outs), (ins GPR: $rs2, GPR: $rs1),
     !strconcat(asm, "\t$rs2, 0($rs1)"),
@@ -149,7 +170,7 @@ let isBarrier = 1, isReturn = 1, isTerminator = 1 in {
 /// 2. SDNode pattern Instruction(Call的instruction)
 
 def MyriscSDT_Call : SDTypeProfile<0, -1, [SDTCisVT<0, iPTR>]>;
-def one_call  : SDNode<"MyriscISD::CALL", MyriscSDT_Call,
+def myrisc_call  : SDNode<"MyriscISD::CALL", MyriscSDT_Call,
                             [SDNPHasChain, SDNPOutGlue,
                              SDNPOptInGlue, SDNPVariadic]>;
 
@@ -158,7 +179,7 @@ def one_call  : SDNode<"MyriscISD::CALL", MyriscSDT_Call,
 
 // def call_symbol : Operand<iPTR>;
 
-def CALL : PseudoInst<(outs), (ins GPR:$rs1), [(one_call GPR:$rs1)]>, PseudoInstExpansion<(JALR RA, GPR:$rs1, 0)> {
+def CALL : PseudoInst<(outs), (ins GPR:$rs1), [(myrisc_call GPR:$rs1)]>, PseudoInstExpansion<(JALR RA, GPR:$rs1, 0)> {
     let isCall = 1;
 }
 

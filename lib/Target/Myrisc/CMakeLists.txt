@@ -23,6 +23,11 @@ add_public_tablegen_target(MyriscCommonTableGen)
 # MyriscCodeGen should match with LLVMBuild.txt MyriscCodeGen
 add_llvm_target(MyriscCodeGen
         MyriscTargetMachine.cpp
+        MyriscInstrInfo.cpp
+        MyriscRegisterInfo.cpp
+        MyriscSubtarget.cpp
+        MyriscFrameLowering.cpp
+        MyriscISelLowering.cpp
 
         LINK_COMPONENTS
         Analysis
