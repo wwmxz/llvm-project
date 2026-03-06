@@ -19,6 +19,8 @@
 #include "llvm/Target/TargetMachine.h"
 
 namespace llvm {
+#define DIV_ROUND_UP(n, d)  (((n) + (d) - 1) / (d))
+#define ROUND_UP(x, align)  (DIV_ROUND_UP(x, align) * (align))
 class MyriscTargetMachine;
 class FunctionPass;
 FunctionPass *createMyriscISelDag(MyriscTargetMachine &TM,CodeGenOpt::Level OptLevel);

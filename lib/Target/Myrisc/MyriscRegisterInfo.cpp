@@ -69,7 +69,29 @@ bool MyriscRegisterInfo::trackLivenessAfterRegAlloc(const MachineFunction &MF) c
 void MyriscRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
                          int SPAdj, unsigned FIOperandNum,
                          RegScavenger *RS ) const {
+  MachineInstr &MI = *II;
+  LLVM_DEBUG(errs() << MI);
 
+  unsigned I = 0;
+  while (!MI.getOperand(I).isFI()) {
+    ++I;
+    assert(I < MI.getNumOperands());
+  }
+
+  const int FI = MI.getOperand(I).getIndex();
+
+  /// 根据 index -> 函数栈帧内部的偏移量
+  const MachineFunction &MF = *MI.getParent()->getParent();
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  int64_t Offset = MFI.getObjectOffset(FI);
+  uint64_t STACKSIZE =
+      ROUND_UP(MFI.getStackSize(), Subtarget.getFrameLowering()->getStackAlignment());
+  Offset += static_cast<int64_t>(STACKSIZE);
+  // 加上指令内的常量偏移（SelectAddrFI的Offset）,相对与FI的偏移量
+  int64_t O = MI.getOperand(I + 1).getImm();
+  Offset += O;
+  MI.getOperand(I).ChangeToRegister(Myrisc::SP, false);
+  MI.getOperand(I + 1).ChangeToImmediate(Offset);
 }
 
 /// Debug information queries.

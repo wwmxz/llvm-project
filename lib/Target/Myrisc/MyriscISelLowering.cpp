@@ -62,7 +62,33 @@ MyriscTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
                                const SDLoc &DL, SelectionDAG &DAG) const {
   // SmallVector<SDValue, 4> RetOps(1, Chain);
   // return DAG.getNode(MyriscISD::RET_GLUE, DL, MVT::Other,RetOps);
-  return Chain;
+  SmallVector<CCValAssign, 16> RVLocs;
+
+  CCState CCInfo(CallConv, IsVarArg, DAG.getMachineFunction(), RVLocs,
+                 *DAG.getContext());
+  CCInfo.AnalyzeReturn(Outs, RetCC_Myrisc);
+
+  SDValue Glue;
+  SmallVector<SDValue, 4> RetOps(1, Chain);
+  ///将返回值传入寄存器中
+  ///
+  ///
+  for (unsigned i = 0, e = RVLocs.size(); i < e; ++i) {
+    CCValAssign &VA = RVLocs[i];
+    assert(VA.isRegLoc() && "Can only return in registers!");
+
+    Chain = DAG.getCopyToReg(Chain, DL, VA.getLocReg(), OutVals[i], Glue);
+    Glue = Chain.getValue(1);
+    RetOps.push_back(DAG.getRegister(VA.getLocReg(), VA.getLocVT()));
+  }
+
+  RetOps[0] = Chain;
+
+  if (Glue.getNode()) {
+    RetOps.push_back(Glue);
+  }
+
+  return DAG.getNode(MyriscISD::RET_GLUE, DL, MVT::Other, RetOps);
 }
 SDValue MyriscTargetLowering::LowerOperation(SDValue Op,
                                              SelectionDAG &DAG) const {
