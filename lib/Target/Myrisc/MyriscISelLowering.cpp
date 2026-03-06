@@ -51,8 +51,7 @@ SDValue MyriscTargetLowering::LowerFormalArguments(
     SDValue Chain, CallingConv::ID CallConv, bool IsVarArg,
     const SmallVectorImpl<ISD::InputArg> &Ins, const SDLoc &DL,
     SelectionDAG &DAG, SmallVectorImpl<SDValue> &InVals) const {
-  return TargetLowering::LowerFormalArguments(Chain, CallConv, IsVarArg, Ins,
-                                              DL, DAG, InVals);
+  return Chain;
 }
 
 SDValue
@@ -61,7 +60,8 @@ MyriscTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
                                const SmallVectorImpl<ISD::OutputArg> &Outs,
                                const SmallVectorImpl<SDValue> &OutVals,
                                const SDLoc &DL, SelectionDAG &DAG) const {
-
+  // SmallVector<SDValue, 4> RetOps(1, Chain);
+  // return DAG.getNode(MyriscISD::RET_GLUE, DL, MVT::Other,RetOps);
   return Chain;
 }
 SDValue MyriscTargetLowering::LowerOperation(SDValue Op,

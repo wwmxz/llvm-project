@@ -89,12 +89,15 @@ public:
   const MyriscSubtarget& getMyriscSubtarget() const {
     return *getTM<MyriscTargetMachine>().getSubtargetImpl();
   }
-  // bool addInstSelector() override;
+  bool addInstSelector() override;
 
 };
-
-}//namespace
+} //namespace
 
 TargetPassConfig *MyriscTargetMachine::createPassConfig(PassManagerBase &PM) {
   return new MyriscPassConfig(*this, PM);
+}
+bool MyriscPassConfig::addInstSelector() {
+  addPass(createMyriscISelDag(getMyriscTargetMachine(),getOptLevel()));
+  return false;
 }

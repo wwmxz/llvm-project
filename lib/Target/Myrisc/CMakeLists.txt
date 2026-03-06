@@ -29,6 +29,7 @@ add_llvm_target(MyriscCodeGen
         MyriscFrameLowering.cpp
         MyriscISelLowering.cpp
         MyriscAsmPrinter.cpp
+        MyriscSelDAGToDAG.cpp
 
         LINK_COMPONENTS
         Analysis

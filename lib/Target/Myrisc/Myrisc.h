@@ -19,7 +19,9 @@
 #include "llvm/Target/TargetMachine.h"
 
 namespace llvm {
-
+class MyriscTargetMachine;
+class FunctionPass;
+FunctionPass *createMyriscISelDag(MyriscTargetMachine &TM,CodeGenOpt::Level OptLevel);
 } // end namespace llvm;
 
 #endif
