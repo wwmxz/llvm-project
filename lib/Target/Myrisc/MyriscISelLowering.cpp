@@ -4,7 +4,7 @@
 
 #include "MyriscISelLowering.h"
 
-
+#include "MCTargetDesc/MyriscMCExpr.h"
 #include "MyriscSubtarget.h"
 #include "MyriscTargetMachine.h"
 
@@ -38,6 +38,9 @@ MyriscTargetLowering::MyriscTargetLowering(const TargetMachine &TM,
   /// 还要处理合法化（类型和操作）
   addRegisterClass(MVT::i32, &Myrisc::GPRRegClass);
 
+  /// 注册合法化的操作
+  setOperationAction(ISD::GlobalAddress, MVT::i32, Custom);
+
   // deirved properties we expose.
   computeRegisterProperties(STI.getRegisterInfo());
 
@@ -45,12 +48,177 @@ MyriscTargetLowering::MyriscTargetLowering(const TargetMachine &TM,
 SDValue
 MyriscTargetLowering::LowerCall(CallLoweringInfo &CLI,
                                 SmallVectorImpl<SDValue> &InVals) const {
-  return TargetLowering::LowerCall(CLI, InVals);
+  SelectionDAG &DAG = CLI.DAG;
+  SDLoc &DL = CLI.DL;
+  SmallVectorImpl<ISD::OutputArg> &Outs = CLI.Outs;
+  /// caller输入的值，即输出给callee的值（实参）
+  ///
+  ///
+  SmallVectorImpl<SDValue> &OutVals = CLI.OutVals;
+  SmallVectorImpl<ISD::InputArg> &Ins = CLI.Ins;
+  SDValue Chain = CLI.Chain;
+  SDValue Callee = CLI.Callee;
+  CallingConv::ID CallConv = CLI.CallConv;
+  bool IsVarArg = CLI.IsVarArg;
+
+  /// 1、按照CallConv，确定实参传递的位置，寄存器、栈
+  ///
+  ///
+  MachineFunction &MF = DAG.getMachineFunction();
+  SmallVector<CCValAssign, 16> ArgLocs;
+  CCState CCInfo(CallConv, IsVarArg, MF, ArgLocs, *DAG.getContext());
+  CCInfo.AnalyzeCallOperands(Outs, CC_Myrisc);
+  /// 寄存器存储信息 寄存器-值
+  SmallVector<std::pair<unsigned, SDValue>> RegsPairs;
+  /// 栈存储信息：栈基地址
+  SDValue StackPtr;
+
+  for (unsigned i=0,e=ArgLocs.size(); i!=e; ++i) {
+    CCValAssign &VA = ArgLocs[i];
+    if (VA.isRegLoc()) {
+      RegsPairs.push_back(std::make_pair(VA.getLocReg(), OutVals[i]));
+    }
+    else {
+      // store节点去放置实参
+      assert(VA.isMemLoc());
+      if (!StackPtr.getNode()) {
+        StackPtr = DAG.getCopyFromReg(Chain, DL, Myrisc::SP,
+                                      getPointerTy(DAG.getDataLayout()));
+      }
+      unsigned LocMemOffset = VA.getLocMemOffset();
+      SDValue PtrOff = DAG.getIntPtrConstant(LocMemOffset, DL);
+      PtrOff = DAG.getNode(ISD::ADD, DL, getPointerTy(DAG.getDataLayout()),
+                           StackPtr, PtrOff);
+      /// store val -> reg + offset
+      Chain = DAG.getStore(Chain, DL, OutVals[i], PtrOff,
+                           MachinePointerInfo::getStack(MF, LocMemOffset));
+    }
+  }
+  ///2、加载函数地址，全局地址32位，需要HI和LO存储
+  ///
+  ///
+  GlobalAddressSDNode *N = dyn_cast<GlobalAddressSDNode>(Callee);
+  if (N!=nullptr) {
+    MVT Ty = getPointerTy(DAG.getDataLayout());
+    SDValue Hi =
+        DAG.getTargetGlobalAddress(N->getGlobal(), DL, Ty, 0, MyriscMCExpr::HI);
+    SDValue Lo =
+        DAG.getTargetGlobalAddress(N->getGlobal(), DL, Ty, 0, MyriscMCExpr::LO);
+
+    SDValue MHiNode = SDValue(DAG.getMachineNode(Myrisc::LUI, DL, Ty, Hi), 0);
+    Callee = SDValue(DAG.getMachineNode(Myrisc::ADDI, DL, Ty, MHiNode, Lo), 0);
+  }
+  else if (ExternalSymbolSDNode *S = dyn_cast<ExternalSymbolSDNode>(Callee)) {
+    MVT Ty = getPointerTy(DAG.getDataLayout());
+    SDValue Hi = DAG.getTargetExternalSymbol(S->getSymbol(), Ty, MyriscMCExpr::HI);
+    SDValue Lo = DAG.getTargetExternalSymbol(S->getSymbol(), Ty, MyriscMCExpr::LO);
+
+    SDValue MHiNode = SDValue(DAG.getMachineNode(Myrisc::LUI, DL, Ty, Hi), 0);
+    Callee = SDValue(DAG.getMachineNode(Myrisc::ADDI, DL, Ty, MHiNode, Lo), 0);
+  }
+
+  /// 3、生成CALLNode
+  ///
+  ///
+
+  /// Ops 列表：Chain（依赖链） + Callee（函数地址） + 传参寄存器 + 寄存器掩码 + Glue
+  ///
+  ///
+  SmallVector<SDValue, 8> Ops(1, Chain);
+  Ops.push_back(Callee);
+
+  SDValue Glue;
+
+  /// 传参到寄存器
+  ///
+  ///
+  for (int i = 0, e = RegsPairs.size(); i != e; ++i) {
+    unsigned reg = RegsPairs[i].first;
+    SDValue& val= RegsPairs[i].second;
+    Chain = DAG.getCopyToReg(Chain, DL, reg, val, Glue);
+    Glue = Chain.getValue(1);
+    Ops.push_back(DAG.getRegister(reg, val.getValueType()));
+  }
+  /// 确定保留寄存器掩码，告诉 LLVM 哪些寄存器调用后不变
+  ///
+  ///
+  const TargetRegisterInfo *TRI = STI.getRegisterInfo();
+  const uint32_t *Mask =
+      TRI->getCallPreservedMask(DAG.getMachineFunction(), CallConv);
+  Ops.push_back(DAG.getRegisterMask(Mask));
+  if (Glue.getNode()) {
+    Ops.push_back(Glue);
+  }
+
+  SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
+  ///生成调用节点
+  Chain = DAG.getNode(MyriscISD::CALL, DL, NodeTys, Ops);
+
+  {
+    /// 4、处理返回值：分析返回值位置从返回寄存器读取值，存入InVals
+    ///
+    ///
+    SDValue Glue = Chain.getValue(1);
+    SmallVector<CCValAssign, 2> RVLos;
+    CCState CCInfo(CallConv, IsVarArg, DAG.getMachineFunction(), RVLos,
+                   *DAG.getContext());
+    CCInfo.AnalyzeCallResult(Ins, RetCC_Myrisc);
+
+    for (unsigned i = 0, e = RVLos.size(); i != e; ++i) {
+      CCValAssign &VA = RVLos[i];
+      EVT vt = RVLos[i].getLocVT();
+      assert(VA.isRegLoc());
+      unsigned RVReg = VA.getLocReg();
+      SDValue Val = DAG.getCopyFromReg(Chain, DL, RVReg, vt, Glue);
+      Chain = Val.getValue(1);
+      Glue = Val.getValue(2);
+      InVals.push_back(Val);
+    }
+  }
+
+  return Chain;
 }
 SDValue MyriscTargetLowering::LowerFormalArguments(
     SDValue Chain, CallingConv::ID CallConv, bool IsVarArg,
     const SmallVectorImpl<ISD::InputArg> &Ins, const SDLoc &DL,
     SelectionDAG &DAG, SmallVectorImpl<SDValue> &InVals) const {
+  // return Chain;
+  MachineFunction& MF=DAG.getMachineFunction();
+  MachineFrameInfo& MFI=MF.getFrameInfo();
+  ///根据调用约定，分析所传参数所在pos(寄存器、栈）
+  ///
+  ///
+  SmallVector<CCValAssign,16> ArgLocs;
+  CCState CCInfo(CallConv,IsVarArg,MF,ArgLocs,*DAG.getContext());
+  CCInfo.AnalyzeFormalArguments(Ins,CC_Myrisc);
+
+  ///从寄存器、栈中拷贝值到invals，便于callee访问
+  ///
+  ///
+  SDValue ArgValue;
+  for (unsigned i=0,e=ArgLocs.size(); i!=e; ++i) {
+    CCValAssign& VA=ArgLocs[i];
+    ///激活寄存器从中拷贝
+    if (VA.isRegLoc()) {
+      MVT RegVT=VA.getValVT();
+      Register Reg=MF.addLiveIn(VA.getLocReg(),&Myrisc::GPRRegClass);
+      ArgValue=DAG.getCopyFromReg(Chain,DL,Reg,RegVT);
+      InVals.push_back(ArgValue);
+    }
+    else {///创建栈的偏移对象，然后使用 load 节点来加载值
+      assert(VA.isMemLoc() && "Myrisc architecture only supports memory arguments for stack!");
+      MVT ValVT=VA.getValVT();
+      int offset=VA.getLocMemOffset();
+      int FI=MFI.CreateFixedObject(ValVT.getSizeInBits()/8,offset,true);
+      SDValue FIN = DAG.getFrameIndex(FI, getPointerTy(DAG.getDataLayout()));
+      SDValue Val = DAG.getLoad(
+          ValVT, DL, Chain, FIN,
+          MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FI));
+      InVals.push_back(Val);
+
+    }
+  }
+
   return Chain;
 }
 
@@ -92,7 +260,13 @@ MyriscTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
 }
 SDValue MyriscTargetLowering::LowerOperation(SDValue Op,
                                              SelectionDAG &DAG) const {
-  return TargetLowering::LowerOperation(Op, DAG);
+  switch (Op.getOpcode()) {
+  case ISD::GlobalAddress:
+    return LowerGlobalAddress(Op, DAG);
+  default:
+    llvm::llvm_unreachable_internal("unknown op");
+  }
+  return SDValue();
 }
 
 const char *MyriscTargetLowering::getTargetNodeName(unsigned Opcode) const {
@@ -111,7 +285,23 @@ const char *MyriscTargetLowering::getTargetNodeName(unsigned Opcode) const {
 }
 SDValue MyriscTargetLowering::LowerGlobalAddress(SDValue Op,
                                                  SelectionDAG &DAG) const {
-  return SDValue();
+  EVT VT = Op.getValueType();
+  GlobalAddressSDNode *N = dyn_cast<GlobalAddressSDNode>(Op);
+  int64_t Offset = N->getOffset();
+  SDLoc DL(N);
+  SDValue Hi =
+      DAG.getTargetGlobalAddress(N->getGlobal(), DL, VT, 0, MyriscMCExpr::HI);
+  SDValue Lo =
+      DAG.getTargetGlobalAddress(N->getGlobal(), DL, VT, 0, MyriscMCExpr::LO);
+
+  SDValue MHiNode = SDValue(DAG.getMachineNode(Myrisc::LUI, DL, VT, Hi), 0);
+  SDValue BaseAddr =
+      SDValue(DAG.getMachineNode(Myrisc::ADDI, DL, VT, MHiNode, Lo), 0);
+  if (Offset) {
+    return DAG.getNode(ISD::ADD, DL, VT, BaseAddr,
+                       DAG.getConstant(Offset, DL, VT));
+  }
+  return BaseAddr;
 }
 SDValue MyriscTargetLowering::LowerConstant(SDValue Op,
                                             SelectionDAG &DAG) const {

@@ -4,6 +4,7 @@
 
 #include "MyriscAsmPrinter.h"
 
+#include "MCTargetDesc/MyriscMCExpr.h"
 
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/MC/MCInst.h"
@@ -89,8 +90,35 @@ void MyriscAsmPrinter::lowerToMCInst(const MachineInstr *MI, MCInst &OutMI) cons
 
 }
 MCOperand MyriscAsmPrinter::lowerSymbolOperand(const MachineOperand &MO,
-                                               bool IsBranch) const {
-  return MCOperand();
+bool IsBranch)  const {
+  MyriscMCExpr::Kind kind = MyriscMCExpr::NONE; // 初始化符号类型（默认无特殊类型）
+  const MCSymbol *symbol = nullptr;
+
+  // 第一步：解析TargetFlags，区分HI/LO寻址（RISC-V风格的高16位/低16位寻址）
+  switch (MO.getTargetFlags()) {
+  case MyriscMCExpr::HI: kind = MyriscMCExpr::HI; break;
+  case MyriscMCExpr::LO: kind = MyriscMCExpr::LO; break;
+  default: break;
+  }
+
+  // 第二步：根据操作数类型，获取对应的MCSymbol（汇编符号）
+  if (MO.getType() == MachineOperand::MO_MachineBasicBlock) {
+    // 操作数是MBB（分支目标）：分支指令和JAL指令的符号类型不同
+    if (!IsBranch) kind = MyriscMCExpr::JAL; // JAL指令的目标符号
+    else           kind = MyriscMCExpr::Branch; // 分支指令的目标符号
+    symbol = MO.getMBB()->getSymbol(); // 获取MBB对应的汇编符号（如.LBB0_1）
+  } else if (MO.getType() == MachineOperand::MO_ExternalSymbol) {
+    // 操作数是外部符号（如printf）
+    symbol = GetExternalSymbolSymbol(MO.getSymbolName());
+  } else {
+    // 操作数是全局变量（如全局整型）
+    symbol = getSymbol(MO.getGlobal());
+  }
+
+  // 第三步：封装为自定义的MyriscMCExpr（适配Myrisc架构的符号寻址）
+  const MCExpr *Expr = MCSymbolRefExpr::create(symbol, OutContext); // 基础符号表达式
+  Expr = new MyriscMCExpr(kind, Expr); // 包装为Myrisc架构的自定义Expr（HI/LO/JAL/Branch）
+  return MCOperand::createExpr(Expr); // 转换为MCOperand返回
 }
 MCOperand MyriscAsmPrinter::LowerOperand(const MachineOperand &MO,
                                          bool IsBranch) const {
@@ -102,6 +130,11 @@ MCOperand MyriscAsmPrinter::LowerOperand(const MachineOperand &MO,
     return MCOperand::createReg(MO.getReg());
   case MachineOperand::MO_Immediate:
     return MCOperand::createImm(MO.getImm());
+  case MachineOperand::MO_GlobalAddress:
+  case MachineOperand::MO_ExternalSymbol:
+  case MachineOperand::MO_MachineBasicBlock: {
+    return lowerSymbolOperand(MO, IsBranch);
+  }
   case MachineOperand::MO_RegisterMask: {
     /// Ignore
     break;
