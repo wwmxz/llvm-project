@@ -9,7 +9,9 @@
 #include "MyriscMCTargetDesc.h"
 // #include "MyriscAsmBackend.h"
 // #include "MyriscMCCodeEmitter.h"
+#include "MyriscInstPrinter.h"
 #include "MyriscInstrInfo.h"
+#include "MyriscMCAsmInfo.h"
 #include "MyriscRegisterInfo.h"
 #include "MyriscSubtarget.h"
 #include "TargetInfo/MyriscTargetInfo.h"
@@ -50,10 +52,25 @@ MCSubtargetInfo *createMyriscMCSubtargetInfo(const Triple &TT, StringRef CPU,
   return createMyriscMCSubtargetInfoImpl(TT, CPU, CPU, FS);
 }
 
+MCInstPrinter *createMyriscMCInstPrinter(const Triple &T, unsigned SyntaxVariant,
+                                      const MCAsmInfo &MAI,
+                                      const MCInstrInfo &MII,
+                                      const MCRegisterInfo &MRI) {
+  return new MyriscInstPrinter(MAI, MII, MRI);
+}
+
+MCAsmInfo *createMyriscMCAsmInfo(const MCRegisterInfo &MRI, const Triple &TT,
+                              const MCTargetOptions &Options) {
+  return new MyriscMCAsmInfo(TT);
+}
+
 
 extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeMyriscTargetMC() {
   TargetRegistry::RegisterMCRegInfo(getTheMyriscTarget(), createMyriscMCRegisterInfo);
   TargetRegistry::RegisterMCInstrInfo(getTheMyriscTarget(), createMyriscMCInstrInfo);
   TargetRegistry::RegisterMCSubtargetInfo(getTheMyriscTarget(),
                                           createMyriscMCSubtargetInfo);
+  TargetRegistry::RegisterMCInstPrinter(getTheMyriscTarget(),
+                                      createMyriscMCInstPrinter);
+  TargetRegistry::RegisterMCAsmInfo(getTheMyriscTarget(), createMyriscMCAsmInfo);
 }

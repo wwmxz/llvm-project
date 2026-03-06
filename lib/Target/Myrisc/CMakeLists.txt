@@ -28,6 +28,7 @@ add_llvm_target(MyriscCodeGen
         MyriscSubtarget.cpp
         MyriscFrameLowering.cpp
         MyriscISelLowering.cpp
+        MyriscAsmPrinter.cpp
 
         LINK_COMPONENTS
         Analysis
