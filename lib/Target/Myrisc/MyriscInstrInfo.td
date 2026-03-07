@@ -232,3 +232,30 @@ def : Pat<(br bb:$dst), (J brtarget:$dst)>;
 //def : I<0b0010011,0b000,(outs GPR:$rd), (ins ptr:$p), "addi \t$rd, $p", [(set GPR:$rd, addrFI:$p)], IIAlu>;
 
 def : Pat<(addrFI GPR:$rs1, imm12:$imm12), (ADDI GPR:$rs1, imm12:$imm12)>;
+
+def SEL : I<0b0010011, 0b010,
+            (outs GPR:$rd),
+            (ins GPR:$rs1, GPR:$rs2, GPR:$rs3),
+            "sel\t$rd, $rs1, $rs2, $rs3",
+            [(set GPR:$rd, (select GPR:$rs1, GPR:$rs2, GPR:$rs3))],
+            IIAlu>;
+// 无符号小于指令（对应setult，解决报错核心）
+def SLTU : R<0b0110011, 0b0000000, 0b011,
+              (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+              "sltu \t$rd, $rs1, $rs2", [], IIAlu>;
+
+// 无符号分支指令（配套无符号比较）
+def BLTU : BRANCH<0b110, "bltu">;
+def BGEU : BRANCH<0b111, "bgeu">;
+
+// ========== 新增：无符号比较setcc匹配规则 ==========
+def : Pat<(setult GPR:$rs1, GPR:$rs2), (SLTU GPR:$rs1, GPR:$rs2)>;
+def : Pat<(setugt GPR:$rs1, GPR:$rs2), (SLTU GPR:$rs2, GPR:$rs1)>;
+def : Pat<(setuge GPR:$rs1, GPR:$rs2), (XORI (SLTU GPR:$rs1, GPR:$rs2), 1)>;
+def : Pat<(setule GPR:$rs1, GPR:$rs2), (XORI (SLTU GPR:$rs2, GPR:$rs1), 1)>;
+
+// ========== 新增：无符号比较brcond分支匹配规则 ==========
+def : Pat<(brcond (i32 (setult GPR:$rs1, GPR:$rs2)), bb:$dst), (BLTU GPR:$rs1, GPR:$rs2, brtarget:$dst)>;
+def : Pat<(brcond (i32 (setugt GPR:$rs1, GPR:$rs2)), bb:$dst), (BLTU GPR:$rs2, GPR:$rs1, brtarget:$dst)>;
+def : Pat<(brcond (i32 (setuge GPR:$rs1, GPR:$rs2)), bb:$dst), (BGEU GPR:$rs1, GPR:$rs2, brtarget:$dst)>;
+def : Pat<(brcond (i32 (setule GPR:$rs1, GPR:$rs2)), bb:$dst), (BGEU GPR:$rs2, GPR:$rs1, brtarget:$dst)>;

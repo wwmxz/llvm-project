@@ -41,6 +41,45 @@ MyriscTargetLowering::MyriscTargetLowering(const TargetMachine &TM,
   /// 注册合法化的操作
   setOperationAction(ISD::GlobalAddress, MVT::i32, Custom);
   setOperationAction(ISD::BR_CC, MVT::i32, Expand);
+  setOperationAction(ISD::Constant, MVT::i32, Custom);
+
+  // ========== 核心修复：设置SELECT_CC节点展开 ==========
+  // 告诉LLVM：把SELECT_CC展开成brcond+phi的基础形式，你的后端已经支持这些基础节点
+  setOperationAction(ISD::SELECT_CC, MVT::i32, Expand);
+  // 同时处理i64(long long)的SELECT_CC，一并展开
+  setOperationAction(ISD::SELECT_CC, MVT::i64, Expand);
+  // ========== 核心修复：处理SMUL_LOHI ==========
+  // 1. 展开32位SMUL_LOHI（生成低32位+高32位）
+  setOperationAction(ISD::SMUL_LOHI, MVT::i32, Expand);
+  // 2. 展开无符号版本（UMUL_LOHI，避免后续可能的报错）
+  setOperationAction(ISD::UMUL_LOHI, MVT::i32, Expand);
+  setOperationAction(ISD::MULHS, MVT::i32, Expand);
+  setOperationAction(ISD::MULHU, MVT::i32, Expand);
+  // 让SELECT节点也走展开逻辑，和SELECT_CC配套
+  // setOperationAction(ISD::SELECT, MVT::i32, Expand);
+  // setOperationAction(ISD::SELECT, MVT::i64, Expand);
+  // ========== 新增：long long(i64)运算基础支持 ==========
+  // 32位架构下，i64的运算默认需要展开，显式设置避免后续无法选择错误
+  for (MVT VT : {MVT::i64}) {
+    // 加减乘除等基础算术运算展开
+    setOperationAction(ISD::ADD, VT, Expand);
+    setOperationAction(ISD::SUB, VT, Expand);
+    setOperationAction(ISD::MUL, VT, Expand);
+    setOperationAction(ISD::SDIV, VT, Expand);
+    setOperationAction(ISD::UDIV, VT, Expand);
+    setOperationAction(ISD::SREM, VT, Expand);
+    setOperationAction(ISD::UREM, VT, Expand);
+    // 逻辑运算展开
+    setOperationAction(ISD::AND, VT, Expand);
+    setOperationAction(ISD::OR, VT, Expand);
+    setOperationAction(ISD::XOR, VT, Expand);
+    // 移位运算展开
+    setOperationAction(ISD::SHL, VT, Expand);
+    setOperationAction(ISD::SRA, VT, Expand);
+    setOperationAction(ISD::SRL, VT, Expand);
+    // 比较运算展开
+    setOperationAction(ISD::SETCC, VT, Expand);
+  }
 
   // deirved properties we expose.
   computeRegisterProperties(STI.getRegisterInfo());
@@ -264,6 +303,9 @@ SDValue MyriscTargetLowering::LowerOperation(SDValue Op,
   switch (Op.getOpcode()) {
   case ISD::GlobalAddress:
     return LowerGlobalAddress(Op, DAG);
+  case ISD::Constant:
+    return LowerConstant(Op, DAG);
+
   default:
     llvm::llvm_unreachable_internal("unknown op");
   }
@@ -304,7 +346,30 @@ SDValue MyriscTargetLowering::LowerGlobalAddress(SDValue Op,
   }
   return BaseAddr;
 }
-SDValue MyriscTargetLowering::LowerConstant(SDValue Op,
-                                            SelectionDAG &DAG) const {
-  return SDValue();
+/// ADDI rd, rs1, imm12
+#define RISCV_IMM_BITS 12
+#define RISCV_IMM_REACH (1LL << RISCV_IMM_BITS)
+#define RISCV_CONST_HIGH_PART(VALUE)                                           \
+(((VALUE) + (RISCV_IMM_REACH / 2)) & ~(RISCV_IMM_REACH - 1))
+#define RISCV_CONST_LOW_PART(VALUE) ((VALUE)-RISCV_CONST_HIGH_PART(VALUE))
+
+SDValue MyriscTargetLowering::LowerConstant(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  EVT VT = Op.getValueType();
+
+  int32_t Imm = dyn_cast<ConstantSDNode>(Op)->getSExtValue();
+
+  if (isInt<12>(Imm)) {
+    SDValue SDImm = DAG.getTargetConstant(Imm, DL, VT);
+    return SDValue(DAG.getMachineNode(Myrisc::ADDI, DL, VT,
+    DAG.getRegister(Myrisc::ZERO, VT), SDImm),0);
+    // return DAG.getTargetConstant(Imm, DL, VT);
+  } else {
+    uint32_t Hi = RISCV_CONST_HIGH_PART(Imm);
+    uint32_t Lo = RISCV_CONST_LOW_PART(Imm);
+    SDValue ImmHI = DAG.getTargetConstant(Hi >> 12, DL, VT);
+    SDValue ImmLo = DAG.getTargetConstant(Lo, DL, VT);
+    SDValue MImmHi = SDValue(DAG.getMachineNode(Myrisc::LUI, DL, VT, ImmHI), 0);
+    return SDValue(DAG.getMachineNode(Myrisc::ADDI, DL, VT, MImmHi, ImmLo), 0);
+  }
 }

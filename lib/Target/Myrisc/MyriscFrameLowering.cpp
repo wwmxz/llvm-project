@@ -25,7 +25,7 @@ void MyriscFrameLowering::emitPrologue(MachineFunction &MF,
     *static_cast<const MyriscRegisterInfo*>(STI.getRegisterInfo());
 
   MachineBasicBlock::iterator MBBI = MBB.begin();
-  DebugLoc dl = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
+  // DebugLoc dl = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
   unsigned SP = Myrisc::SP;
 
   // First, compute final stack size.
@@ -34,14 +34,17 @@ void MyriscFrameLowering::emitPrologue(MachineFunction &MF,
   // No need to allocate space on the stack.
   if (StackSize == 0 && !MFI.adjustsStack()) return;
 
-  MachineModuleInfo &MMI = MF.getMMI();
+  // MachineModuleInfo &MMI = MF.getMMI();
 
   // Adjust stack.
-  DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
-  BuildMI(MBB, MBBI, DL, TII.get(Myrisc::ADDI), Myrisc::SP)
-      .addReg(SP)
-      .addImm(-StackSize)
-      .setMIFlag(MachineInstr::FrameSetup);
+  // DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
+  // BuildMI(MBB, MBBI, DL, TII.get(Myrisc::ADDI), Myrisc::SP)
+  //     .addReg(SP)
+  //     .addImm(-StackSize)
+  //     .setMIFlag(MachineInstr::FrameSetup);
+
+  // Adjust stack.
+  TII.adjustStackPtr(SP, -StackSize, MBB, MBBI);
 
 }
 // Éú³ÉÎ²Éù£º
@@ -61,7 +64,6 @@ void MyriscFrameLowering::emitEpilogue(MachineFunction &MF,
   const MyriscRegisterInfo &RegInfo =
     *static_cast<const MyriscRegisterInfo*>(STI.getRegisterInfo());
 
-  DebugLoc dl = MBBI->getDebugLoc();
   unsigned SP = Myrisc::SP;
 
   // Get the number of bytes from FrameInfo
@@ -71,11 +73,14 @@ void MyriscFrameLowering::emitEpilogue(MachineFunction &MF,
     return;
 
   // Adjust stack.
-  DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
-  BuildMI(MBB, MBBI, DL, TII.get(Myrisc::ADDI), Myrisc::SP)
-      .addReg(SP)
-      .addImm(StackSize)
-      .setMIFlag(MachineInstr::FrameDestroy);
+  // DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
+  // BuildMI(MBB, MBBI, DL, TII.get(Myrisc::ADDI), Myrisc::SP)
+  //     .addReg(SP)
+  //     .addImm(StackSize)
+  //     .setMIFlag(MachineInstr::FrameDestroy);
+
+  // Adjust stack.
+  TII.adjustStackPtr(SP, StackSize, MBB, MBBI);
 }
 void MyriscFrameLowering::determineCalleeSaves(MachineFunction &MF,
                                                BitVector &SavedRegs,

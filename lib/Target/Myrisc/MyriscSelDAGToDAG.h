@@ -36,7 +36,7 @@ private:
   const MyriscTargetMachine &getTargetMachine() {
     return static_cast<const MyriscTargetMachine &>(TM);
   }
-
+public:
   void Select(SDNode *N) override;
 };
 
